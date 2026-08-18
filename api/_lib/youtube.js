@@ -1,18 +1,19 @@
 // Unofficial YouTube caption-fetching helpers. YouTube's internal endpoints
-// used here are undocumented and can change without notice — when they do,
-// the app falls back to Gemini audio transcription (see transcribe-upload.js).
+// used here are undocumented and can change without notice — when a video
+// has no usable caption track (or this lookup fails outright), the app
+// falls back to asking Gemini to transcribe the video directly by URL (see
+// transcribeYoutubeUrl in src/services/gemini.js), which Google's own
+// servers fetch — no scraping involved for that path at all.
 //
 // This deliberately does NOT scrape the public /watch HTML page. Requests
 // for that full page from datacenter IPs (which is what every serverless
 // host's outbound IP looks like to YouTube) get served an interstitial
-// "Sign in to confirm you're not a bot" page instead of the real page,
-// which breaks both the ytInitialPlayerResponse scrape and — indirectly —
-// the ytdl-core audio fallback, since it does the same page fetch
-// internally. Calling the InnerTube `player` endpoint directly — the same
-// JSON API youtube.com's own web client calls over XHR for this data — is
-// the technique current unofficial tools (yt-dlp, youtubei.js) use instead,
-// and is materially less likely to hit that wall. It isn't immune to
-// YouTube tightening things further, but it's the more robust of the two.
+// "Sign in to confirm you're not a bot" page instead of the real page.
+// Calling the InnerTube `player` endpoint directly — the same JSON API
+// youtube.com's own web client calls over XHR for this data — is the
+// technique current unofficial tools (yt-dlp, youtubei.js) use instead, and
+// is materially less likely to hit that wall. It isn't immune to YouTube
+// tightening things further, but it's the more robust of the two.
 const INNERTUBE_API_KEY = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8'
 const INNERTUBE_CLIENT_VERSION = '2.20240726.00.00'
 

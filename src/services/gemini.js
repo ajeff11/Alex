@@ -118,47 +118,34 @@ export async function transcribeAudio(audioBlob, mimeType) {
   return transcribeFromUploadedFile(fileUri, mimeType)
 }
 
-/**
- * Transcribe audio that has already been uploaded to Gemini's Files API
- * (see api/transcribe-upload.js, which does the upload server-side to avoid
- * routing large audio files through the browser).
- * @returns {Promise<{text: string, startTime: number|null}[]>}
- */
-export async function transcribeFromUploadedFile(fileUri, mimeType) {
-  const apiKey = requireApiKey()
-  const prompt = `Transcribe the Spanish spoken in this audio. Return ONLY JSON matching this shape:
+const TRANSCRIBE_PROMPT = `Transcribe the Spanish spoken in this audio/video. Return ONLY JSON matching this shape:
 {"segments": [{"text": "<spanish sentence or phrase>", "startTime": <seconds as number, or null if unknown>}]}
 Break the transcript into natural sentence- or phrase-level segments. Preserve accents and punctuation. Do not translate — keep the Spanish text as spoken.`
 
+const TRANSCRIBE_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    segments: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          text: { type: 'STRING' },
+          startTime: { type: 'NUMBER', nullable: true },
+        },
+        required: ['text'],
+      },
+    },
+  },
+  required: ['segments'],
+}
+
+async function transcribeFileData(filePart, apiKey) {
   const response = await callGenerateContent(
     AUDIO_MODEL,
     {
-      contents: [
-        {
-          role: 'user',
-          parts: [{ text: prompt }, { file_data: { mime_type: mimeType, file_uri: fileUri } }],
-        },
-      ],
-      generationConfig: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: 'OBJECT',
-          properties: {
-            segments: {
-              type: 'ARRAY',
-              items: {
-                type: 'OBJECT',
-                properties: {
-                  text: { type: 'STRING' },
-                  startTime: { type: 'NUMBER', nullable: true },
-                },
-                required: ['text'],
-              },
-            },
-          },
-          required: ['segments'],
-        },
-      },
+      contents: [{ role: 'user', parts: [{ text: TRANSCRIBE_PROMPT }, filePart] }],
+      generationConfig: { responseMimeType: 'application/json', responseSchema: TRANSCRIBE_SCHEMA },
     },
     { apiKey }
   )
@@ -168,6 +155,33 @@ Break the transcript into natural sentence- or phrase-level segments. Preserve a
     text: s.text,
     startTime: typeof s.startTime === 'number' ? s.startTime : null,
   }))
+}
+
+/**
+ * Transcribe audio that has already been uploaded to Gemini's Files API
+ * (see api/transcribe-upload.js, which does the upload server-side to avoid
+ * routing large audio files through the browser).
+ * @returns {Promise<{text: string, startTime: number|null}[]>}
+ */
+export async function transcribeFromUploadedFile(fileUri, mimeType) {
+  const apiKey = requireApiKey()
+  return transcribeFileData({ file_data: { mime_type: mimeType, file_uri: fileUri } }, apiKey)
+}
+
+/**
+ * Transcribe a YouTube video directly by URL — Gemini fetches the video
+ * itself server-side (Google's own infrastructure, not ours), which sidesteps
+ * YouTube's bot-detection blocking of datacenter IPs entirely. This is the
+ * fallback used when no usable caption track exists; captions are still
+ * tried first since they're free and instant, while this consumes real
+ * tokens proportional to video length (Gemini ingests it as full video, not
+ * audio-only).
+ * @param {string} youtubeUrl canonical https://www.youtube.com/watch?v=... or youtu.be URL
+ * @returns {Promise<{text: string, startTime: number|null}[]>}
+ */
+export async function transcribeYoutubeUrl(youtubeUrl) {
+  const apiKey = requireApiKey()
+  return transcribeFileData({ file_data: { file_uri: youtubeUrl } }, apiKey)
 }
 
 async function uploadFile(blob, mimeType, apiKey) {

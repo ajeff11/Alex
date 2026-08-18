@@ -1,5 +1,5 @@
 import { getApiKey } from './settings'
-import { transcribeFromUploadedFile, MissingApiKeyError, GeminiError } from './gemini'
+import { transcribeYoutubeUrl, transcribeFromUploadedFile, MissingApiKeyError, GeminiError } from './gemini'
 
 function isYoutubeUrl(url) {
   return /(?:youtube\.com|youtu\.be)/i.test(url)
@@ -16,42 +16,52 @@ export async function transcribeSource(sourceUrl, onProgress = () => {}) {
 
   if (isYoutubeUrl(trimmed)) {
     onProgress('Looking for existing captions…')
-    const captionResult = await tryYoutubeCaptions(trimmed)
-    if (captionResult) return captionResult
+    const captionLookup = await fetchYoutubeCaptions(trimmed)
+    if (captionLookup.available) {
+      return {
+        title: captionLookup.title || 'Untitled video',
+        sourceType: 'youtube',
+        transcript: captionLookup.transcript,
+      }
+    }
 
-    onProgress('No usable captions — transcribing audio with Gemini…')
-    return transcribeViaGeminiFallback(trimmed, 'youtube', onProgress)
+    // No usable caption track (or the lookup itself failed, e.g. YouTube
+    // blocking the caption request). Ask Gemini to fetch and transcribe the
+    // video directly by URL instead — Google's own servers do the fetching,
+    // which sidesteps YouTube's bot-detection blocking of datacenter IPs
+    // (the failure mode that breaks scraping-based approaches entirely).
+    onProgress('No usable captions — asking Gemini to transcribe the video directly…')
+    if (!getApiKey()) throw new MissingApiKeyError()
+    const transcript = await transcribeYoutubeUrl(trimmed)
+    return {
+      title: captionLookup.title || guessTitleFromUrl(trimmed),
+      sourceType: 'youtube',
+      transcript,
+    }
   }
 
   onProgress('Transcribing podcast audio with Gemini…')
-  return transcribeViaGeminiFallback(trimmed, 'podcast', onProgress)
+  return transcribePodcast(trimmed, onProgress)
 }
 
-async function tryYoutubeCaptions(url) {
-  let res
+async function fetchYoutubeCaptions(url) {
   try {
-    res = await fetch(`/api/youtube-transcript?url=${encodeURIComponent(url)}`)
+    const res = await fetch(`/api/youtube-transcript?url=${encodeURIComponent(url)}`)
+    if (!res.ok) return { available: false }
+    return await res.json()
   } catch {
-    return null // network hiccup on the caption path — fall through to Gemini
-  }
-  if (!res.ok) return null
-  const data = await res.json()
-  if (!data.available) return null
-  return {
-    title: data.title || 'Untitled video',
-    sourceType: 'youtube',
-    transcript: data.transcript,
+    return { available: false } // network hiccup on the caption path — fall through to Gemini
   }
 }
 
-async function transcribeViaGeminiFallback(url, sourceType, onProgress) {
+async function transcribePodcast(url, onProgress) {
   const apiKey = getApiKey()
   if (!apiKey) throw new MissingApiKeyError()
 
   const uploadRes = await fetch('/api/transcribe-upload', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sourceUrl: url, sourceType, apiKey }),
+    body: JSON.stringify({ sourceUrl: url, apiKey }),
   })
   if (!uploadRes.ok) {
     const body = await safeJson(uploadRes)
@@ -66,7 +76,7 @@ async function transcribeViaGeminiFallback(url, sourceType, onProgress) {
 
   return {
     title: guessTitleFromUrl(url),
-    sourceType,
+    sourceType: 'podcast',
     transcript,
   }
 }
