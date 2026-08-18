@@ -4,8 +4,11 @@ import { getApiKey } from './settings'
 // touching UI code. Uses the free-tier Flash models directly via REST so we
 // don't need to ship the full SDK for three call shapes.
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta'
-const TEXT_MODEL = 'gemini-2.5-flash'
-const AUDIO_MODEL = 'gemini-2.5-flash'
+// gemini-2.5-flash was retired ("no longer available to new users") as of
+// this writing; verified live against the free tier that 3.6-flash is its
+// replacement and behaves the same for our JSON-schema-constrained calls.
+const TEXT_MODEL = 'gemini-3.6-flash'
+const AUDIO_MODEL = 'gemini-3.6-flash'
 
 export class GeminiError extends Error {
   constructor(message, { status, isRateLimit = false } = {}) {
