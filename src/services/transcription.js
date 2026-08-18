@@ -1,5 +1,6 @@
 import { getApiKey } from './settings'
 import { transcribeYoutubeUrl, transcribeFromUploadedFile, MissingApiKeyError, GeminiError } from './gemini'
+import { withWakeLock } from '../utils/wakeLock'
 
 function isYoutubeUrl(url) {
   return /(?:youtube\.com|youtu\.be)/i.test(url)
@@ -25,6 +26,10 @@ export async function transcribeSource(sourceUrl, onProgress = () => {}) {
   const trimmed = sourceUrl.trim()
   if (!trimmed) throw new Error('Paste a YouTube link or podcast audio URL first.')
 
+  return withWakeLock(() => runTranscription(trimmed, onProgress))
+}
+
+async function runTranscription(trimmed, onProgress) {
   if (isYoutubeUrl(trimmed)) {
     onProgress('Looking for existing captions…')
     const captionLookup = await fetchYoutubeCaptions(trimmed)

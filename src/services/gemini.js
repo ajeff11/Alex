@@ -38,7 +38,7 @@ function requireApiKey() {
 // paths pass a longer one explicitly since video ingestion is genuinely slow.
 const DEFAULT_TIMEOUT_MS = 60_000
 
-async function callGenerateContent(model, body, { apiKey, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+async function callGenerateContent(model, body, { apiKey, timeoutMs = DEFAULT_TIMEOUT_MS, _retried = false } = {}) {
   const key = apiKey ?? requireApiKey()
   const url = `${API_BASE}/models/${model}:generateContent?key=${encodeURIComponent(key)}`
   const controller = new AbortController()
@@ -57,7 +57,15 @@ async function callGenerateContent(model, body, { apiKey, timeoutMs = DEFAULT_TI
         `Gemini didn't respond within ${Math.round(timeoutMs / 1000)}s. Long videos can take a while to process, or this may be a network issue — try again, or try a shorter/captioned source.`
       )
     }
-    throw new GeminiError('Could not reach Gemini — check your network connection.')
+    // Not a timeout — a genuine connection failure. On iOS, backgrounding a
+    // PWA (screen lock, app switch) mid-request can kill the connection
+    // outright; that's transient, so one silent retry before giving up.
+    if (!_retried) {
+      return callGenerateContent(model, body, { apiKey: key, timeoutMs, _retried: true })
+    }
+    throw new GeminiError(
+      'Could not reach Gemini — check your network connection. If this was a long transcription, keeping the app open and the screen on while it runs helps avoid this on iPhone.'
+    )
   } finally {
     clearTimeout(timer)
   }
