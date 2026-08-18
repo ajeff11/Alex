@@ -4,6 +4,7 @@ import {
   pickSpanishCaptionTrack,
   fetchCaptionSegments,
   getVideoTitle,
+  getVideoLengthSeconds,
 } from './_lib/youtube.js'
 
 export const config = { maxDuration: 30 }
@@ -45,15 +46,16 @@ export default async function handler(req, res) {
     }
 
     const title = getVideoTitle(playerResponse)
+    const lengthSeconds = getVideoLengthSeconds(playerResponse)
     const track = pickSpanishCaptionTrack(playerResponse)
     if (!track) {
-      res.status(200).json({ available: false, reason: 'no_spanish_captions', videoId, title })
+      res.status(200).json({ available: false, reason: 'no_spanish_captions', videoId, title, lengthSeconds })
       return
     }
 
     const segments = await fetchCaptionSegments(track.baseUrl)
     if (segments.length === 0) {
-      res.status(200).json({ available: false, reason: 'empty_captions', videoId, title })
+      res.status(200).json({ available: false, reason: 'empty_captions', videoId, title, lengthSeconds })
       return
     }
 

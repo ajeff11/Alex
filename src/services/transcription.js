@@ -5,6 +5,17 @@ function isYoutubeUrl(url) {
   return /(?:youtube\.com|youtu\.be)/i.test(url)
 }
 
+// Gemini ingests the whole video (not audio-only) for the direct-URL
+// fallback, so both wall-clock time and token/quota use scale with length.
+// Past this, the wait and quota cost stop being worth it for a video that
+// most likely also isn't captioned — surface that clearly instead of
+// leaving the user watching a spinner for several minutes.
+const MAX_DIRECT_TRANSCRIBE_SECONDS = 25 * 60
+
+function formatMinutes(seconds) {
+  return Math.round(seconds / 60)
+}
+
 /**
  * @param {string} sourceUrl
  * @param {(status: string) => void} [onProgress]
@@ -30,7 +41,16 @@ export async function transcribeSource(sourceUrl, onProgress = () => {}) {
     // video directly by URL instead — Google's own servers do the fetching,
     // which sidesteps YouTube's bot-detection blocking of datacenter IPs
     // (the failure mode that breaks scraping-based approaches entirely).
-    onProgress('No usable captions — asking Gemini to transcribe the video directly…')
+    if (
+      typeof captionLookup.lengthSeconds === 'number' &&
+      captionLookup.lengthSeconds > MAX_DIRECT_TRANSCRIBE_SECONDS
+    ) {
+      throw new GeminiError(
+        `This video is about ${formatMinutes(captionLookup.lengthSeconds)} minutes long and has no Spanish captions. Direct video transcription only works well under ${formatMinutes(MAX_DIRECT_TRANSCRIBE_SECONDS)} minutes — it gets slow and eats into your daily Gemini quota fast beyond that. Try a shorter clip, or a captioned video.`
+      )
+    }
+
+    onProgress('No usable captions — asking Gemini to transcribe the video directly (this can take a few minutes)…')
     if (!getApiKey()) throw new MissingApiKeyError()
     const transcript = await transcribeYoutubeUrl(trimmed)
     return {

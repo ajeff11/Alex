@@ -32,18 +32,34 @@ function requireApiKey() {
   return key
 }
 
-async function callGenerateContent(model, body, { apiKey } = {}) {
+// Plain fetch() has no default timeout — without one, a slow or stuck
+// response (e.g. Gemini ingesting a long video) leaves the UI spinning
+// forever with no feedback. Every call gets a bound; the transcription
+// paths pass a longer one explicitly since video ingestion is genuinely slow.
+const DEFAULT_TIMEOUT_MS = 60_000
+
+async function callGenerateContent(model, body, { apiKey, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   const key = apiKey ?? requireApiKey()
   const url = `${API_BASE}/models/${model}:generateContent?key=${encodeURIComponent(key)}`
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
   let res
   try {
     res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal: controller.signal,
     })
-  } catch {
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      throw new GeminiError(
+        `Gemini didn't respond within ${Math.round(timeoutMs / 1000)}s. Long videos can take a while to process, or this may be a network issue — try again, or try a shorter/captioned source.`
+      )
+    }
     throw new GeminiError('Could not reach Gemini — check your network connection.')
+  } finally {
+    clearTimeout(timer)
   }
 
   if (!res.ok) {
@@ -140,6 +156,11 @@ const TRANSCRIBE_SCHEMA = {
   required: ['segments'],
 }
 
+// Transcribing audio/video is much slower than a text call — ingesting a
+// long file can genuinely take minutes, so this gets a much longer bound
+// than the default before we call it "stuck" and surface an error.
+const TRANSCRIBE_TIMEOUT_MS = 5 * 60_000
+
 async function transcribeFileData(filePart, apiKey) {
   const response = await callGenerateContent(
     AUDIO_MODEL,
@@ -147,7 +168,7 @@ async function transcribeFileData(filePart, apiKey) {
       contents: [{ role: 'user', parts: [{ text: TRANSCRIBE_PROMPT }, filePart] }],
       generationConfig: { responseMimeType: 'application/json', responseSchema: TRANSCRIBE_SCHEMA },
     },
-    { apiKey }
+    { apiKey, timeoutMs: TRANSCRIBE_TIMEOUT_MS }
   )
 
   const parsed = parseJsonResponse(response)

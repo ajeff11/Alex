@@ -78,6 +78,12 @@ export function getVideoTitle(playerResponse) {
   return playerResponse?.videoDetails?.title ?? 'Untitled video'
 }
 
+export function getVideoLengthSeconds(playerResponse) {
+  const raw = playerResponse?.videoDetails?.lengthSeconds
+  const n = Number(raw)
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
 /** Fetch a caption track in JSON3 format and normalize to transcript segments. */
 export async function fetchCaptionSegments(baseUrl) {
   const url = baseUrl.includes('fmt=') ? baseUrl : `${baseUrl}&fmt=json3`
