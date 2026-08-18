@@ -55,7 +55,9 @@ async function runTranscription(trimmed, onProgress) {
       )
     }
 
-    onProgress('No usable captions — asking Gemini to transcribe the video directly (this can take a few minutes)…')
+    onProgress(
+      `No usable Spanish captions (${describeCaptionDiagnostic(captionLookup)}) — asking Gemini to transcribe the video directly (this can take a few minutes)…`
+    )
     if (!getApiKey()) throw new MissingApiKeyError()
     const transcript = await transcribeYoutubeUrl(trimmed)
     return {

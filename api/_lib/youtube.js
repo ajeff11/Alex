@@ -74,6 +74,26 @@ export function pickSpanishCaptionTrack(playerResponse) {
   return null
 }
 
+/**
+ * Diagnostic: every caption track the player response actually lists, plus
+ * whether that list was present at all. Used to tell apart "this video
+ * genuinely has no captions" from "captionTracks came back empty even
+ * though the video has captions" (e.g. if YouTube's newer transcript-panel
+ * UI is backed by a different endpoint than this legacy field for some
+ * videos) without guessing blind.
+ */
+export function listCaptionTracks(playerResponse) {
+  const tracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks
+  return {
+    fieldPresent: Array.isArray(tracks),
+    tracks: (tracks || []).map((t) => ({
+      languageCode: t.languageCode,
+      name: t.name?.simpleText ?? t.name?.runs?.map((r) => r.text).join('') ?? null,
+      kind: t.kind ?? null,
+    })),
+  }
+}
+
 export function getVideoTitle(playerResponse) {
   return playerResponse?.videoDetails?.title ?? 'Untitled video'
 }
