@@ -1,4 +1,4 @@
-import { getApiKey } from './settings'
+import { hasApiKey, getOrderedApiKeys, setActiveKeyId } from './settings'
 import { transcribeYoutubeUrl, transcribeFromUploadedFile, MissingApiKeyError, GeminiError } from './gemini'
 import { withWakeLock } from '../utils/wakeLock'
 
@@ -15,6 +15,18 @@ const MAX_DIRECT_TRANSCRIBE_SECONDS = 25 * 60
 
 function formatMinutes(seconds) {
   return Math.round(seconds / 60)
+}
+
+/** Human-readable summary of what the caption lookup actually found, for
+ * the progress text shown right before falling back to Gemini — so a "no
+ * captions" result is diagnosable from the UI alone, no dev tools needed. */
+function describeCaptionDiagnostic(captionLookup) {
+  const diag = captionLookup.captionDiagnostic
+  if (!diag) return captionLookup.reason || 'no caption info returned'
+  if (!diag.fieldPresent) return 'YouTube returned no caption data at all for this video'
+  if (diag.tracks.length === 0) return 'YouTube listed zero caption tracks'
+  const langs = diag.tracks.map((t) => `${t.languageCode}${t.kind === 'asr' ? ' auto' : ''}`).join(', ')
+  return `found tracks: ${langs}`
 }
 
 /**
@@ -58,7 +70,7 @@ async function runTranscription(trimmed, onProgress) {
     onProgress(
       `No usable Spanish captions (${describeCaptionDiagnostic(captionLookup)}) — asking Gemini to transcribe the video directly (this can take a few minutes)…`
     )
-    if (!getApiKey()) throw new MissingApiKeyError()
+    if (!hasApiKey()) throw new MissingApiKeyError()
     const transcript = await transcribeYoutubeUrl(trimmed)
     return {
       title: captionLookup.title || guessTitleFromUrl(trimmed),
@@ -81,10 +93,42 @@ async function fetchYoutubeCaptions(url) {
   }
 }
 
+/**
+ * Uploads podcast audio server-side, trying each saved API key in turn —
+ * same auto-fallback-on-quota-exhaustion behavior as the Gemini calls
+ * themselves (see callGenerateContent in services/gemini.js), just done
+ * client-side here since this step goes through our own serverless route
+ * rather than calling Gemini directly.
+ */
 async function transcribePodcast(url, onProgress) {
-  const apiKey = getApiKey()
-  if (!apiKey) throw new MissingApiKeyError()
+  const keys = getOrderedApiKeys()
+  if (keys.length === 0) throw new MissingApiKeyError()
 
+  let lastError
+  for (const entry of keys) {
+    try {
+      const { fileUri, mimeType } = await uploadPodcastAudio(url, entry.key)
+      setActiveKeyId(entry.id)
+
+      onProgress('Audio uploaded — asking Gemini to transcribe…')
+      const transcript = await transcribeFromUploadedFile(fileUri, mimeType)
+      return { title: guessTitleFromUrl(url), sourceType: 'podcast', transcript }
+    } catch (err) {
+      lastError = err
+      if (!(err instanceof GeminiError) || !err.isRateLimit) throw err
+      // this key's free-tier quota is exhausted for now — try the next one
+    }
+  }
+
+  throw (
+    lastError ??
+    new GeminiError('All saved Gemini keys are out of free-tier quota for now. Try again later.', {
+      isRateLimit: true,
+    })
+  )
+}
+
+async function uploadPodcastAudio(url, apiKey) {
   const uploadRes = await fetch('/api/transcribe-upload', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -94,18 +138,10 @@ async function transcribePodcast(url, onProgress) {
     const body = await safeJson(uploadRes)
     throw new GeminiError(body?.error || `Could not fetch/upload audio (${uploadRes.status}).`, {
       status: uploadRes.status,
+      isRateLimit: uploadRes.status === 429,
     })
   }
-  const { fileUri, mimeType } = await uploadRes.json()
-
-  onProgress('Audio uploaded — asking Gemini to transcribe…')
-  const transcript = await transcribeFromUploadedFile(fileUri, mimeType)
-
-  return {
-    title: guessTitleFromUrl(url),
-    sourceType: 'podcast',
-    transcript,
-  }
+  return uploadRes.json()
 }
 
 function guessTitleFromUrl(url) {

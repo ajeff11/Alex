@@ -1,4 +1,4 @@
-import { getApiKey } from './settings'
+import { getOrderedApiKeys, setActiveKeyId } from './settings'
 
 // Single choke point for all Gemini calls. Swap models/endpoints here without
 // touching UI code. Uses the free-tier Flash models directly via REST so we
@@ -34,20 +34,19 @@ export class MissingApiKeyError extends GeminiError {
   }
 }
 
-function requireApiKey() {
-  const key = getApiKey()
-  if (!key) throw new MissingApiKeyError()
-  return key
-}
-
 // Plain fetch() has no default timeout — without one, a slow or stuck
 // response (e.g. Gemini ingesting a long video) leaves the UI spinning
 // forever with no feedback. Every call gets a bound; the transcription
 // paths pass a longer one explicitly since video ingestion is genuinely slow.
 const DEFAULT_TIMEOUT_MS = 60_000
 
-async function callGenerateContent(model, body, { apiKey, timeoutMs = DEFAULT_TIMEOUT_MS, _retried = false } = {}) {
-  const key = apiKey ?? requireApiKey()
+/**
+ * Calls generateContent with a single, explicit key — no key rotation.
+ * The default export below (callGenerateContent) wraps this with rotation
+ * across saved keys; testApiKey calls this directly since testing a
+ * specific key should never silently fall through to a different one.
+ */
+async function fetchGenerateContentOnce(model, body, key, timeoutMs, _retried = false) {
   const url = `${API_BASE}/models/${model}:generateContent?key=${encodeURIComponent(key)}`
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -69,7 +68,7 @@ async function callGenerateContent(model, body, { apiKey, timeoutMs = DEFAULT_TI
     // PWA (screen lock, app switch) mid-request can kill the connection
     // outright; that's transient, so one silent retry before giving up.
     if (!_retried) {
-      return callGenerateContent(model, body, { apiKey: key, timeoutMs, _retried: true })
+      return fetchGenerateContentOnce(model, body, key, timeoutMs, true)
     }
     throw new GeminiError(
       'Could not reach Gemini — check your network connection. If this was a long transcription, keeping the app open and the screen on while it runs helps avoid this on iPhone.'
@@ -99,6 +98,45 @@ async function callGenerateContent(model, body, { apiKey, timeoutMs = DEFAULT_TI
   }
 
   return res.json()
+}
+
+/**
+ * Calls generateContent, automatically falling back through saved API keys
+ * (in getOrderedApiKeys() order — last-successful key first) when one hits
+ * its free-tier daily quota (429). Only a 429 triggers a fallback; any other
+ * error (bad request, timeout, network failure after its own retry) is
+ * real and rethrown immediately, since switching keys wouldn't fix it.
+ * Pass an explicit `apiKey` to bypass rotation entirely (used by
+ * testApiKey, where falling through to a different key would defeat the
+ * point of testing this one).
+ */
+async function callGenerateContent(model, body, { apiKey, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+  if (apiKey) {
+    return fetchGenerateContentOnce(model, body, apiKey, timeoutMs)
+  }
+
+  const keys = getOrderedApiKeys()
+  if (keys.length === 0) throw new MissingApiKeyError()
+
+  let lastError
+  for (const entry of keys) {
+    try {
+      const result = await fetchGenerateContentOnce(model, body, entry.key, timeoutMs)
+      setActiveKeyId(entry.id)
+      return result
+    } catch (err) {
+      lastError = err
+      if (!(err instanceof GeminiError) || !err.isRateLimit) throw err
+      // 429 — this key's free-tier quota is exhausted for now, try the next one
+    }
+  }
+
+  throw new GeminiError(
+    keys.length > 1
+      ? `All ${keys.length} saved Gemini keys are out of free-tier quota for now. Try again later, or add another key in Settings.`
+      : lastError?.message ?? "Gemini's free-tier daily quota is used up for now. Try again later, or add another key in Settings.",
+    { status: 429, isRateLimit: true }
+  )
 }
 
 function extractText(response) {
@@ -135,24 +173,6 @@ export async function testApiKey(apiKey) {
   }
 }
 
-/**
- * Transcribe a Spanish audio file with Gemini.
- *
- * Uses the Files API for upload rather than inlining base64 audio: it accepts
- * files up to 2GB and multi-hour audio in a single prompt, which covers any
- * realistic podcast episode without us hand-rolling audio chunking/splitting
- * in the browser (no ffmpeg available client-side).
- *
- * @param {Blob} audioBlob
- * @param {string} mimeType e.g. 'audio/mpeg', 'audio/mp4', 'audio/wav'
- * @returns {Promise<{text: string, startTime: number|null}[]>}
- */
-export async function transcribeAudio(audioBlob, mimeType) {
-  const apiKey = requireApiKey()
-  const fileUri = await uploadFile(audioBlob, mimeType, apiKey)
-  return transcribeFromUploadedFile(fileUri, mimeType)
-}
-
 const TRANSCRIBE_PROMPT = `Transcribe the Spanish spoken in this audio/video. Return ONLY JSON matching this shape:
 {"segments": [{"text": "<spanish sentence or phrase>", "startTime": <seconds as number, or null if unknown>}]}
 Break the transcript into natural sentence- or phrase-level segments. Preserve accents and punctuation. Do not translate — keep the Spanish text as spoken.`
@@ -180,14 +200,14 @@ const TRANSCRIBE_SCHEMA = {
 // than the default before we call it "stuck" and surface an error.
 const TRANSCRIBE_TIMEOUT_MS = 5 * 60_000
 
-async function transcribeFileData(filePart, apiKey) {
+async function transcribeFileData(filePart) {
   const response = await callGenerateContent(
     AUDIO_MODEL,
     {
       contents: [{ role: 'user', parts: [{ text: TRANSCRIBE_PROMPT }, filePart] }],
       generationConfig: { responseMimeType: 'application/json', responseSchema: TRANSCRIBE_SCHEMA },
     },
-    { apiKey, timeoutMs: TRANSCRIBE_TIMEOUT_MS }
+    { timeoutMs: TRANSCRIBE_TIMEOUT_MS }
   )
 
   const parsed = parseJsonResponse(response)
@@ -204,8 +224,7 @@ async function transcribeFileData(filePart, apiKey) {
  * @returns {Promise<{text: string, startTime: number|null}[]>}
  */
 export async function transcribeFromUploadedFile(fileUri, mimeType) {
-  const apiKey = requireApiKey()
-  return transcribeFileData({ file_data: { mime_type: mimeType, file_uri: fileUri } }, apiKey)
+  return transcribeFileData({ file_data: { mime_type: mimeType, file_uri: fileUri } })
 }
 
 /**
@@ -220,47 +239,7 @@ export async function transcribeFromUploadedFile(fileUri, mimeType) {
  * @returns {Promise<{text: string, startTime: number|null}[]>}
  */
 export async function transcribeYoutubeUrl(youtubeUrl) {
-  const apiKey = requireApiKey()
-  return transcribeFileData({ file_data: { file_uri: youtubeUrl } }, apiKey)
-}
-
-async function uploadFile(blob, mimeType, apiKey) {
-  const startRes = await fetch(
-    `${API_BASE}/files?key=${encodeURIComponent(apiKey)}`,
-    {
-      method: 'POST',
-      headers: {
-        'X-Goog-Upload-Protocol': 'resumable',
-        'X-Goog-Upload-Command': 'start',
-        'X-Goog-Upload-Header-Content-Length': String(blob.size),
-        'X-Goog-Upload-Header-Content-Type': mimeType,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ file: { display_name: 'audio-upload' } }),
-    }
-  )
-  if (!startRes.ok) {
-    throw new GeminiError(`Could not start audio upload to Gemini (${startRes.status}).`)
-  }
-  const uploadUrl = startRes.headers.get('X-Goog-Upload-URL')
-  if (!uploadUrl) throw new GeminiError('Gemini did not return an upload URL.')
-
-  const uploadRes = await fetch(uploadUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Length': String(blob.size),
-      'X-Goog-Upload-Offset': '0',
-      'X-Goog-Upload-Command': 'upload, finalize',
-    },
-    body: blob,
-  })
-  if (!uploadRes.ok) {
-    throw new GeminiError(`Audio upload to Gemini failed (${uploadRes.status}).`)
-  }
-  const uploaded = await uploadRes.json()
-  const uri = uploaded?.file?.uri
-  if (!uri) throw new GeminiError('Gemini upload did not return a file URI.')
-  return uri
+  return transcribeFileData({ file_data: { file_uri: youtubeUrl } })
 }
 
 /**

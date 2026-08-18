@@ -29,6 +29,9 @@ export default async function handler(req, res) {
     const fileUri = await uploadBufferToGemini({ apiKey, buffer, mimeType })
     res.status(200).json({ fileUri, mimeType })
   } catch (err) {
-    res.status(502).json({ error: String(err.message || err) })
+    // Forward a 429 as-is so the client can tell "this key's quota is
+    // exhausted, try another saved key" apart from any other failure.
+    const status = err.status === 429 ? 429 : 502
+    res.status(status).json({ error: String(err.message || err) })
   }
 }

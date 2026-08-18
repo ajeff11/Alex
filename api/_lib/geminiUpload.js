@@ -4,6 +4,17 @@
 // fetch would need — the serverless function has no such restriction.
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta'
 
+// Carries the upstream HTTP status so the route handler can tell a quota
+// exhaustion (429 — the client should try a different saved key) apart
+// from any other failure (fetch error, bad audio, etc.).
+export class UploadError extends Error {
+  constructor(message, status) {
+    super(message)
+    this.name = 'UploadError'
+    this.status = status
+  }
+}
+
 // Guard against pathological inputs blowing the function's memory budget.
 const MAX_BYTES = 300 * 1024 * 1024
 
@@ -46,7 +57,7 @@ export async function uploadBufferToGemini({ apiKey, buffer, mimeType }) {
   })
   if (!startRes.ok) {
     const detail = await safeJson(startRes)
-    throw new Error(`Could not start Gemini upload (${startRes.status}): ${detail}`)
+    throw new UploadError(`Could not start Gemini upload (${startRes.status}): ${detail}`, startRes.status)
   }
   const uploadUrl = startRes.headers.get('x-goog-upload-url')
   if (!uploadUrl) throw new Error('Gemini did not return an upload URL.')
@@ -62,7 +73,7 @@ export async function uploadBufferToGemini({ apiKey, buffer, mimeType }) {
   })
   if (!uploadRes.ok) {
     const detail = await safeJson(uploadRes)
-    throw new Error(`Gemini upload failed (${uploadRes.status}): ${detail}`)
+    throw new UploadError(`Gemini upload failed (${uploadRes.status}): ${detail}`, uploadRes.status)
   }
   const uploaded = await uploadRes.json()
   const uri = uploaded?.file?.uri
