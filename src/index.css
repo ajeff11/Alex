@@ -27,20 +27,18 @@ html,
 body {
   margin: 0;
   padding: 0;
+  height: 100%;
   background: var(--bg);
   color: var(--text);
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior-y: none;
 }
 
-body {
-  min-height: 100dvh;
-}
-
 #root {
-  min-height: 100dvh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 button,
@@ -62,6 +60,10 @@ a {
 
 .app-main {
   flex: 1;
+  min-height: 0; /* flex items default to min-height:auto, which would let this grow to fit
+                    its content instead of clipping to the available space — without this,
+                    overflow-y:auto never actually engages and the window scrolls instead,
+                    which breaks position:sticky children (they need a real scrolling ancestor) */
   overflow-y: auto;
   padding: calc(var(--safe-top) + 16px) 16px calc(80px + var(--safe-bottom));
   max-width: 640px;
@@ -296,12 +298,19 @@ a {
   margin: 0 auto 16px;
 }
 
-/* Media player */
+/* Media player — sticky so it stays visible while the transcript scrolls
+   underneath it, matching how YouTube's own transcript panel behaves. */
 .media-player {
-  margin-bottom: 20px;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  margin: 0 -16px 20px;
+  padding: 0 16px 12px;
+  background: var(--bg);
+  box-shadow: 0 8px 12px -8px rgba(0, 0, 0, 0.4);
 }
 
-.media-player.video {
+.video-frame {
   position: relative;
   width: 100%;
   padding-top: 56.25%; /* 16:9 */
@@ -310,7 +319,7 @@ a {
   background: #000;
 }
 
-.media-player.video iframe {
+.video-frame iframe {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -365,6 +374,15 @@ a {
 
 .transcript-segment {
   margin-bottom: 10px;
+  border-radius: 8px;
+  padding: 4px 8px;
+  margin-left: -8px;
+  margin-right: -8px;
+  transition: background-color 0.2s ease;
+}
+
+.transcript-segment.active {
+  background: rgba(123, 110, 240, 0.16);
 }
 
 /* Quiz */

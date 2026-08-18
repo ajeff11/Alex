@@ -1,26 +1,49 @@
-import { forwardRef, useImperativeHandle, useRef } from 'react'
+import { forwardRef, useImperativeHandle, useRef, useEffect } from 'react'
 import { extractVideoId } from '../utils/youtube'
 
+let youtubeApiPromise = null
+function loadYoutubeIframeApi() {
+  if (window.YT?.Player) return Promise.resolve(window.YT)
+  if (youtubeApiPromise) return youtubeApiPromise
+  youtubeApiPromise = new Promise((resolve) => {
+    const previous = window.onYouTubeIframeAPIReady
+    window.onYouTubeIframeAPIReady = () => {
+      previous?.()
+      resolve(window.YT)
+    }
+    const script = document.createElement('script')
+    script.src = 'https://www.youtube.com/iframe_api'
+    document.head.appendChild(script)
+  })
+  return youtubeApiPromise
+}
+
 /**
- * Renders either a YouTube iframe embed or an HTML5 audio player, and
- * exposes seekTo(seconds) so transcript segments can jump playback to their
- * timestamp.
+ * Renders either a YouTube player or an HTML5 audio player, and:
+ * - exposes seekTo(seconds) so transcript segments can jump playback there
+ * - reports currentTime via onTimeUpdate and play state via onPlayingChange,
+ *   so the transcript can highlight/auto-scroll to the active segment
+ *
+ * YouTube uses the real IFrame Player API (not raw postMessage) because
+ * tracking playback position requires calling player.getCurrentTime() —
+ * there's no native timeupdate-style event for embedded YouTube players, so
+ * this polls it on an interval while playing, which is the standard
+ * approach for transcript-sync UIs.
  */
-const MediaPlayer = forwardRef(function MediaPlayer({ sourceType, sourceUrl }, ref) {
-  const iframeRef = useRef(null)
+const MediaPlayer = forwardRef(function MediaPlayer(
+  { sourceType, sourceUrl, onTimeUpdate, onPlayingChange },
+  ref
+) {
+  const containerRef = useRef(null)
   const audioRef = useRef(null)
+  const ytPlayerRef = useRef(null)
+  const pollRef = useRef(null)
 
   useImperativeHandle(ref, () => ({
     seekTo(seconds) {
-      if (sourceType === 'youtube' && iframeRef.current) {
-        iframeRef.current.contentWindow?.postMessage(
-          JSON.stringify({ event: 'command', func: 'seekTo', args: [seconds, true] }),
-          '*'
-        )
-        iframeRef.current.contentWindow?.postMessage(
-          JSON.stringify({ event: 'command', func: 'playVideo', args: [] }),
-          '*'
-        )
+      if (sourceType === 'youtube' && ytPlayerRef.current) {
+        ytPlayerRef.current.seekTo(seconds, true)
+        ytPlayerRef.current.playVideo()
       } else if (audioRef.current) {
         audioRef.current.currentTime = seconds
         audioRef.current.play().catch(() => {})
@@ -28,26 +51,64 @@ const MediaPlayer = forwardRef(function MediaPlayer({ sourceType, sourceUrl }, r
     },
   }))
 
+  useEffect(() => {
+    if (sourceType !== 'youtube') return undefined
+    const videoId = extractVideoId(sourceUrl)
+    if (!videoId || !containerRef.current) return undefined
+
+    let cancelled = false
+    loadYoutubeIframeApi().then((YT) => {
+      if (cancelled || !containerRef.current) return
+      ytPlayerRef.current = new YT.Player(containerRef.current, {
+        videoId,
+        playerVars: { rel: 0, playsinline: 1 },
+        events: {
+          onStateChange: (e) => {
+            const playing = e.data === YT.PlayerState.PLAYING
+            onPlayingChange?.(playing)
+            clearInterval(pollRef.current)
+            if (playing) {
+              pollRef.current = setInterval(() => {
+                onTimeUpdate?.(ytPlayerRef.current?.getCurrentTime() ?? 0)
+              }, 400)
+            }
+          },
+        },
+      })
+    })
+
+    return () => {
+      cancelled = true
+      clearInterval(pollRef.current)
+      ytPlayerRef.current?.destroy?.()
+      ytPlayerRef.current = null
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-init only when the source actually changes
+  }, [sourceType, sourceUrl])
+
   if (sourceType === 'youtube') {
     const videoId = extractVideoId(sourceUrl)
     if (!videoId) return null
     return (
       <div className="media-player video">
-        <iframe
-          ref={iframeRef}
-          src={`https://www.youtube.com/embed/${videoId}?enablejsapi=1&rel=0&playsinline=1`}
-          title="YouTube video"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-          allowFullScreen
-          frameBorder="0"
-        />
+        <div className="video-frame">
+          <div ref={containerRef} />
+        </div>
       </div>
     )
   }
 
   return (
     <div className="media-player audio">
-      <audio ref={audioRef} controls src={sourceUrl} preload="metadata" />
+      <audio
+        ref={audioRef}
+        controls
+        src={sourceUrl}
+        preload="metadata"
+        onTimeUpdate={(e) => onTimeUpdate?.(e.currentTarget.currentTime)}
+        onPlay={() => onPlayingChange?.(true)}
+        onPause={() => onPlayingChange?.(false)}
+      />
     </div>
   )
 })

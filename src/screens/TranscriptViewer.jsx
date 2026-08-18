@@ -18,7 +18,10 @@ export default function TranscriptViewer() {
   const [session, setSession] = useState(null)
   const [savedWords, setSavedWords] = useState(new Set())
   const [sheetState, setSheetState] = useState(null) // { word, sentence, status, result, error }
+  const [activeIndex, setActiveIndex] = useState(-1)
+  const [isPlaying, setIsPlaying] = useState(false)
   const playerRef = useRef(null)
+  const segmentRefs = useRef([])
   // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally reset per session
   const translationCache = useMemo(() => new Map(), [sessionId])
 
@@ -31,6 +34,24 @@ export default function TranscriptViewer() {
     getSession(sessionId).then(setSession)
     refreshSavedWords()
   }, [sessionId, refreshSavedWords])
+
+  const handleTimeUpdate = useCallback(
+    (currentTime) => {
+      if (!session) return
+      let active = -1
+      for (let i = 0; i < session.transcript.length; i++) {
+        const t = session.transcript[i].startTime
+        if (t != null && t <= currentTime) active = i
+      }
+      setActiveIndex(active)
+    },
+    [session]
+  )
+
+  useEffect(() => {
+    if (!isPlaying || activeIndex < 0) return
+    segmentRefs.current[activeIndex]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [activeIndex, isPlaying])
 
   async function handleWordTap(rawWord, sentence) {
     const word = stripPunctuation(rawWord)
@@ -84,12 +105,24 @@ export default function TranscriptViewer() {
       <p className="screen-subtitle">Tap any word for a contextual translation.</p>
 
       {session.sourceUrl && (
-        <MediaPlayer ref={playerRef} sourceType={session.sourceType} sourceUrl={session.sourceUrl} />
+        <MediaPlayer
+          ref={playerRef}
+          sourceType={session.sourceType}
+          sourceUrl={session.sourceUrl}
+          onTimeUpdate={handleTimeUpdate}
+          onPlayingChange={setIsPlaying}
+        />
       )}
 
       <div className="transcript-text">
         {session.transcript.map((seg, i) => (
-          <p className="transcript-segment" key={i}>
+          <p
+            className={'transcript-segment' + (i === activeIndex ? ' active' : '')}
+            key={i}
+            ref={(el) => {
+              segmentRefs.current[i] = el
+            }}
+          >
             {seg.startTime != null && (
               <button
                 className="segment-timestamp"

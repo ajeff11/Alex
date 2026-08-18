@@ -10,6 +10,14 @@ const API_BASE = 'https://generativelanguage.googleapis.com/v1beta'
 const TEXT_MODEL = 'gemini-3.6-flash'
 const AUDIO_MODEL = 'gemini-3.6-flash'
 
+// This model "thinks" by default even for trivial requests — verified live
+// that a plain word-translation call took ~14s and burned ~160 hidden
+// "thinking" tokens with no thinkingConfig, vs. ~1.7s and zero thinking
+// tokens with this set. Used for the small, well-defined, latency-sensitive
+// calls (translate, quiz generation) where deep reasoning isn't needed;
+// deliberately left off for transcription, where accuracy matters more.
+const LOW_LATENCY_THINKING = { thinkingLevel: 'low' }
+
 export class GeminiError extends Error {
   constructor(message, { status, isRateLimit = false } = {}) {
     super(message)
@@ -115,7 +123,10 @@ export async function testApiKey(apiKey) {
   try {
     await callGenerateContent(
       TEXT_MODEL,
-      { contents: [{ role: 'user', parts: [{ text: 'Reply with the single word: ok' }] }] },
+      {
+        contents: [{ role: 'user', parts: [{ text: 'Reply with the single word: ok' }] }],
+        generationConfig: { thinkingConfig: LOW_LATENCY_THINKING },
+      },
       { apiKey }
     )
     return true
@@ -272,6 +283,7 @@ Return ONLY JSON: {"wordTranslation": "...", "dictionaryForm": "...", "sentenceT
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     generationConfig: {
       responseMimeType: 'application/json',
+      thinkingConfig: LOW_LATENCY_THINKING,
       responseSchema: {
         type: 'OBJECT',
         properties: {
@@ -324,6 +336,7 @@ Return ONLY JSON:
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     generationConfig: {
       responseMimeType: 'application/json',
+      thinkingConfig: LOW_LATENCY_THINKING,
       responseSchema: { type: 'OBJECT', properties, required },
     },
   })
