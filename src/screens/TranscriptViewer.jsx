@@ -1,16 +1,24 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { getSession } from '../db/sessions'
 import { addWord, getAllWords } from '../db/wordBank'
 import { translateInContext, GeminiError } from '../services/gemini'
 import { tokenizeTranscript, stripPunctuation, normalize } from '../utils/textUtils'
 import BottomSheet from '../components/BottomSheet'
+import MediaPlayer from '../components/MediaPlayer'
+
+function formatTimestamp(seconds) {
+  const m = Math.floor(seconds / 60)
+  const s = Math.floor(seconds % 60)
+  return `${m}:${String(s).padStart(2, '0')}`
+}
 
 export default function TranscriptViewer() {
   const { sessionId } = useParams()
   const [session, setSession] = useState(null)
   const [savedWords, setSavedWords] = useState(new Set())
   const [sheetState, setSheetState] = useState(null) // { word, sentence, status, result, error }
+  const playerRef = useRef(null)
   // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally reset per session
   const translationCache = useMemo(() => new Map(), [sessionId])
 
@@ -75,9 +83,23 @@ export default function TranscriptViewer() {
       </h1>
       <p className="screen-subtitle">Tap any word for a contextual translation.</p>
 
+      {session.sourceUrl && (
+        <MediaPlayer ref={playerRef} sourceType={session.sourceType} sourceUrl={session.sourceUrl} />
+      )}
+
       <div className="transcript-text">
         {session.transcript.map((seg, i) => (
           <p className="transcript-segment" key={i}>
+            {seg.startTime != null && (
+              <button
+                className="segment-timestamp"
+                onClick={() => playerRef.current?.seekTo(seg.startTime)}
+                type="button"
+                aria-label={`Play from ${formatTimestamp(seg.startTime)}`}
+              >
+                ▶ {formatTimestamp(seg.startTime)}
+              </button>
+            )}
             {tokenizeTranscript(seg.text).map((token, j) =>
               /\s+/.test(token) ? (
                 <span key={j}>{token}</span>
