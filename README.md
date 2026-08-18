@@ -63,9 +63,18 @@ then runs standalone, matching the manifest's `display: standalone`.
 - **Voice input** (Web Speech API) is best-effort and unreliable on iOS
   Safari; the mic button only appears when the browser reports support.
 - **YouTube caption fetching is unofficial** (`api/youtube-transcript.js`
-  scrapes `ytInitialPlayerResponse` and the public `timedtext` endpoint).
-  It can break without notice. When it does, or when a video has no Spanish
-  captions, the app automatically falls back to Gemini audio transcription.
+  calls YouTube's InnerTube `player` JSON endpoint, then the public
+  `timedtext` endpoint). It can break without notice. When it does, or when
+  a video has no Spanish captions, the app falls back to Gemini audio
+  transcription.
+- **YouTube videos with no captions are the weakest path.** Extracting a
+  playable audio stream (via `ytdl-core`, only used when a video has no
+  Spanish captions) is exactly where YouTube's bot defenses are strongest —
+  requests from cloud/datacenter IPs (which is what every serverless host's
+  outbound IP looks like) can get challenged with "Sign in to confirm
+  you're not a bot" and fail outright. There's no fully reliable workaround
+  for this from a serverless deploy. Captioned videos and direct podcast
+  URLs aren't affected — prefer those.
 - **Gemini's free tier has daily quotas.** A 429 shows a clear in-app
   message rather than failing silently.
 
