@@ -1,7 +1,6 @@
 import {
   extractVideoId,
-  fetchWatchPage,
-  parsePlayerResponse,
+  fetchPlayerResponse,
   pickSpanishCaptionTrack,
   fetchCaptionSegments,
   getVideoTitle,
@@ -28,8 +27,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const html = await fetchWatchPage(videoId)
-    const playerResponse = parsePlayerResponse(html)
+    const playerResponse = await fetchPlayerResponse(videoId)
     if (!playerResponse) {
       res.status(200).json({ available: false, reason: 'unparseable_page', videoId })
       return

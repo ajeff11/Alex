@@ -43,6 +43,14 @@ export default async function handler(req, res) {
     const fileUri = await uploadBufferToGemini({ apiKey, buffer, mimeType })
     res.status(200).json({ fileUri, mimeType })
   } catch (err) {
-    res.status(502).json({ error: String(err.message || err) })
+    const message = String(err.message || err)
+    if (sourceType === 'youtube' && /sign in to confirm/i.test(message)) {
+      res.status(502).json({
+        error:
+          "YouTube blocked this server from reading the video's audio (it thinks the request is a bot, which is common for cloud servers like this one). This only affects YouTube videos with no Spanish captions — captioned videos and direct podcast URLs aren't affected.",
+      })
+      return
+    }
+    res.status(502).json({ error: message })
   }
 }

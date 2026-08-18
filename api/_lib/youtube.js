@@ -1,7 +1,20 @@
 // Unofficial YouTube caption-fetching helpers. YouTube's internal endpoints
-// used here (timedtext, ytInitialPlayerResponse) are undocumented and can
-// change without notice — when they do, the app falls back to Gemini audio
-// transcription (see api/transcribe.js).
+// used here are undocumented and can change without notice — when they do,
+// the app falls back to Gemini audio transcription (see transcribe-upload.js).
+//
+// This deliberately does NOT scrape the public /watch HTML page. Requests
+// for that full page from datacenter IPs (which is what every serverless
+// host's outbound IP looks like to YouTube) get served an interstitial
+// "Sign in to confirm you're not a bot" page instead of the real page,
+// which breaks both the ytInitialPlayerResponse scrape and — indirectly —
+// the ytdl-core audio fallback, since it does the same page fetch
+// internally. Calling the InnerTube `player` endpoint directly — the same
+// JSON API youtube.com's own web client calls over XHR for this data — is
+// the technique current unofficial tools (yt-dlp, youtubei.js) use instead,
+// and is materially less likely to hit that wall. It isn't immune to
+// YouTube tightening things further, but it's the more robust of the two.
+const INNERTUBE_API_KEY = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8'
+const INNERTUBE_CLIENT_VERSION = '2.20240726.00.00'
 
 export function extractVideoId(url) {
   try {
@@ -19,27 +32,33 @@ export function extractVideoId(url) {
   return null
 }
 
-export async function fetchWatchPage(videoId) {
-  const res = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
-    headers: {
-      'User-Agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
-      'Accept-Language': 'en-US,en;q=0.9',
-    },
-  })
-  if (!res.ok) throw new Error(`Could not load YouTube video page (${res.status}).`)
-  return res.text()
-}
-
-export function parsePlayerResponse(html) {
-  const match = html.match(/var ytInitialPlayerResponse\s*=\s*(\{.+?\});/s) ||
-    html.match(/ytInitialPlayerResponse"?\s*=\s*(\{.+?\})\s*;\s*(?:var|const|let)/s)
-  if (!match) return null
-  try {
-    return JSON.parse(match[1])
-  } catch {
-    return null
-  }
+export async function fetchPlayerResponse(videoId) {
+  const res = await fetch(
+    `https://www.youtube.com/youtubei/v1/player?key=${INNERTUBE_API_KEY}&prettyPrint=false`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+        Origin: 'https://www.youtube.com',
+        Referer: `https://www.youtube.com/watch?v=${videoId}`,
+      },
+      body: JSON.stringify({
+        videoId,
+        context: {
+          client: {
+            hl: 'en',
+            gl: 'US',
+            clientName: 'WEB',
+            clientVersion: INNERTUBE_CLIENT_VERSION,
+          },
+        },
+      }),
+    }
+  )
+  if (!res.ok) throw new Error(`Could not reach YouTube's player API (${res.status}).`)
+  return res.json()
 }
 
 export function pickSpanishCaptionTrack(playerResponse) {
