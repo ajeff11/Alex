@@ -131,15 +131,14 @@ export default function TranscriptViewer() {
       <p className="screen-subtitle">Tap any word for a contextual translation.</p>
 
       {session.sourceUrl && (
-        <div ref={mediaWrapperRef}>
-          <MediaPlayer
-            ref={playerRef}
-            sourceType={session.sourceType}
-            sourceUrl={session.sourceUrl}
-            onTimeUpdate={handleTimeUpdate}
-            onPlayingChange={setIsPlaying}
-          />
-        </div>
+        <MediaPlayer
+          ref={playerRef}
+          measureRef={mediaWrapperRef}
+          sourceType={session.sourceType}
+          sourceUrl={session.sourceUrl}
+          onTimeUpdate={handleTimeUpdate}
+          onPlayingChange={setIsPlaying}
+        />
       )}
 
       <div className="transcript-text" style={{ '--sticky-offset': `${stickyOffset}px` }}>

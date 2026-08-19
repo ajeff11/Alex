@@ -31,7 +31,7 @@ function loadYoutubeIframeApi() {
  * approach for transcript-sync UIs.
  */
 const MediaPlayer = forwardRef(function MediaPlayer(
-  { sourceType, sourceUrl, onTimeUpdate, onPlayingChange },
+  { sourceType, sourceUrl, onTimeUpdate, onPlayingChange, measureRef },
   ref
 ) {
   const containerRef = useRef(null)
@@ -97,7 +97,7 @@ const MediaPlayer = forwardRef(function MediaPlayer(
     const videoId = extractVideoId(sourceUrl)
     if (!videoId) return null
     return (
-      <div className="media-player video">
+      <div className="media-player video" ref={measureRef}>
         <div className="video-frame">
           <div ref={containerRef} />
         </div>
@@ -106,7 +106,7 @@ const MediaPlayer = forwardRef(function MediaPlayer(
   }
 
   return (
-    <div className="media-player audio">
+    <div className="media-player audio" ref={measureRef}>
       <audio
         ref={audioRef}
         controls
