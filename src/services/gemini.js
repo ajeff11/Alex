@@ -18,12 +18,22 @@ const AUDIO_MODEL = 'gemini-3.6-flash'
 // deliberately left off for transcription, where accuracy matters more.
 const LOW_LATENCY_THINKING = { thinkingLevel: 'low' }
 
+// A word translation or quiz sentence normally comes back in 1-10s (verified
+// live). Reports of 50s+ waits are far outside that range — almost
+// certainly Gemini's own backend queuing/load variance on the free tier,
+// which is outside our control, but there's no reason to let a user sit
+// through a full minute of it. Capping the wait tighter and retrying once
+// turns "silently very slow" into "fails fast and quietly tries again" —
+// usually faster overall than waiting out one slow attempt.
+const FAST_TIMEOUT_MS = 15_000
+
 export class GeminiError extends Error {
-  constructor(message, { status, isRateLimit = false } = {}) {
+  constructor(message, { status, isRateLimit = false, isTimeout = false } = {}) {
     super(message)
     this.name = 'GeminiError'
     this.status = status
     this.isRateLimit = isRateLimit
+    this.isTimeout = isTimeout
   }
 }
 
@@ -61,7 +71,8 @@ async function fetchGenerateContentOnce(model, body, key, timeoutMs, _retried = 
   } catch (err) {
     if (err.name === 'AbortError') {
       throw new GeminiError(
-        `Gemini didn't respond within ${Math.round(timeoutMs / 1000)}s. Long videos can take a while to process, or this may be a network issue — try again, or try a shorter/captioned source.`
+        `Gemini didn't respond within ${Math.round(timeoutMs / 1000)}s. Long videos can take a while to process, or this may be a network issue — try again, or try a shorter/captioned source.`,
+        { isTimeout: true }
       )
     }
     // Not a timeout — a genuine connection failure. On iOS, backgrounding a
@@ -137,6 +148,25 @@ async function callGenerateContent(model, body, { apiKey, timeoutMs = DEFAULT_TI
       : lastError?.message ?? "Gemini's free-tier daily quota is used up for now. Try again later, or add another key in Settings.",
     { status: 429, isRateLimit: true }
   )
+}
+
+/**
+ * Same as callGenerateContent, but on a timeout specifically (not a real
+ * error — just no response within timeoutMs) tries once more with a fresh
+ * timeout window before giving up. Used for the fast, interactive calls
+ * (translate, quiz generation) so one unusually slow attempt doesn't force
+ * the user to wait through the entire thing — a second attempt is very
+ * likely to land within the normal 1-10s range instead.
+ */
+async function callWithTimeoutRetry(model, body, options) {
+  try {
+    return await callGenerateContent(model, body, options)
+  } catch (err) {
+    if (err instanceof GeminiError && err.isTimeout) {
+      return callGenerateContent(model, body, options)
+    }
+    throw err
+  }
 }
 
 function extractText(response) {
@@ -258,23 +288,27 @@ Tapped word: "${word}"
 
 Return ONLY JSON: {"wordTranslation": "...", "dictionaryForm": "...", "sentenceTranslation": "..."}`
 
-  const response = await callGenerateContent(TEXT_MODEL, {
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    generationConfig: {
-      responseMimeType: 'application/json',
-      thinkingConfig: LOW_LATENCY_THINKING,
-      maxOutputTokens: 200,
-      responseSchema: {
-        type: 'OBJECT',
-        properties: {
-          wordTranslation: { type: 'STRING' },
-          dictionaryForm: { type: 'STRING' },
-          sentenceTranslation: { type: 'STRING' },
+  const response = await callWithTimeoutRetry(
+    TEXT_MODEL,
+    {
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: {
+        responseMimeType: 'application/json',
+        thinkingConfig: LOW_LATENCY_THINKING,
+        maxOutputTokens: 200,
+        responseSchema: {
+          type: 'OBJECT',
+          properties: {
+            wordTranslation: { type: 'STRING' },
+            dictionaryForm: { type: 'STRING' },
+            sentenceTranslation: { type: 'STRING' },
+          },
+          required: ['wordTranslation', 'dictionaryForm', 'sentenceTranslation'],
         },
-        required: ['wordTranslation', 'dictionaryForm', 'sentenceTranslation'],
       },
     },
-  })
+    { timeoutMs: FAST_TIMEOUT_MS }
+  )
 
   return parseJsonResponse(response)
 }
@@ -312,15 +346,19 @@ Return ONLY JSON:
     required.push('distractors')
   }
 
-  const response = await callGenerateContent(TEXT_MODEL, {
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    generationConfig: {
-      responseMimeType: 'application/json',
-      thinkingConfig: LOW_LATENCY_THINKING,
-      maxOutputTokens: 300,
-      responseSchema: { type: 'OBJECT', properties, required },
+  const response = await callWithTimeoutRetry(
+    TEXT_MODEL,
+    {
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: {
+        responseMimeType: 'application/json',
+        thinkingConfig: LOW_LATENCY_THINKING,
+        maxOutputTokens: 300,
+        responseSchema: { type: 'OBJECT', properties, required },
+      },
     },
-  })
+    { timeoutMs: FAST_TIMEOUT_MS }
+  )
 
   const parsed = parseJsonResponse(response)
   return { distractors: [], ...parsed }
