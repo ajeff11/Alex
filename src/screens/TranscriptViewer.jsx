@@ -20,7 +20,9 @@ export default function TranscriptViewer() {
   const [sheetState, setSheetState] = useState(null) // { word, sentence, status, result, error }
   const [activeIndex, setActiveIndex] = useState(-1)
   const [isPlaying, setIsPlaying] = useState(false)
+  const [stickyOffset, setStickyOffset] = useState(0)
   const playerRef = useRef(null)
+  const mediaWrapperRef = useRef(null)
   const segmentRefs = useRef([])
   // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally reset per session
   const translationCache = useMemo(() => new Map(), [sessionId])
@@ -50,13 +52,37 @@ export default function TranscriptViewer() {
 
   useEffect(() => {
     if (!isPlaying || activeIndex < 0) return
-    segmentRefs.current[activeIndex]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    // block:'start' + scroll-margin-top (set from the measured sticky media
+    // player height, below) so the active line lands cleanly below the
+    // player instead of centering into the space it visually occupies.
+    segmentRefs.current[activeIndex]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, [activeIndex, isPlaying])
+
+  // The video and audio players render at very different heights, and the
+  // sticky player sits on top of the transcript's scroll area without
+  // removing that space from it — without accounting for its real height,
+  // the active line can auto-scroll to a position still hidden underneath
+  // it. Measured live (not hardcoded) since audio vs. video differ so much.
+  useEffect(() => {
+    const el = mediaWrapperRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return undefined
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0]
+      if (entry) setStickyOffset(entry.contentRect.height)
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [session?.sourceUrl])
 
   async function handleWordTap(rawWord, sentence) {
     const word = stripPunctuation(rawWord)
     if (!word) return
     const key = normalize(word)
+
+    // Pause playback while the user reads a translation — easy to miss
+    // what's being said otherwise, especially with the bottom sheet
+    // covering part of the transcript.
+    playerRef.current?.pause()
 
     if (translationCache.has(key)) {
       setSheetState({ word, sentence, status: 'ready', result: translationCache.get(key) })
@@ -105,16 +131,18 @@ export default function TranscriptViewer() {
       <p className="screen-subtitle">Tap any word for a contextual translation.</p>
 
       {session.sourceUrl && (
-        <MediaPlayer
-          ref={playerRef}
-          sourceType={session.sourceType}
-          sourceUrl={session.sourceUrl}
-          onTimeUpdate={handleTimeUpdate}
-          onPlayingChange={setIsPlaying}
-        />
+        <div ref={mediaWrapperRef}>
+          <MediaPlayer
+            ref={playerRef}
+            sourceType={session.sourceType}
+            sourceUrl={session.sourceUrl}
+            onTimeUpdate={handleTimeUpdate}
+            onPlayingChange={setIsPlaying}
+          />
+        </div>
       )}
 
-      <div className="transcript-text">
+      <div className="transcript-text" style={{ '--sticky-offset': `${stickyOffset}px` }}>
         {session.transcript.map((seg, i) => (
           <p
             className={'transcript-segment' + (i === activeIndex ? ' active' : '')}

@@ -263,6 +263,7 @@ Return ONLY JSON: {"wordTranslation": "...", "dictionaryForm": "...", "sentenceT
     generationConfig: {
       responseMimeType: 'application/json',
       thinkingConfig: LOW_LATENCY_THINKING,
+      maxOutputTokens: 200,
       responseSchema: {
         type: 'OBJECT',
         properties: {
@@ -316,6 +317,7 @@ Return ONLY JSON:
     generationConfig: {
       responseMimeType: 'application/json',
       thinkingConfig: LOW_LATENCY_THINKING,
+      maxOutputTokens: 300,
       responseSchema: { type: 'OBJECT', properties, required },
     },
   })

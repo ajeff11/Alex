@@ -12,10 +12,33 @@
 // Calling the InnerTube `player` endpoint directly — the same JSON API
 // youtube.com's own web client calls over XHR for this data — is the
 // technique current unofficial tools (yt-dlp, youtubei.js) use instead, and
-// is materially less likely to hit that wall. It isn't immune to YouTube
-// tightening things further, but it's the more robust of the two.
+// is materially less likely to hit that wall.
+//
+// Tries the ANDROID client first: it doesn't require guessing a currently-
+// valid WEB client version string (which YouTube ties to real release
+// dates and treats an obviously-stale one as a bot signal — this app's
+// previous WEB-only attempt was pinned to a mid-2024 version, which is
+// exactly the kind of staleness that can cause a technically-successful
+// response to still come back with captions missing or degraded), and is
+// what tools like yt-dlp default to for this exact reason. Falls back to
+// WEB if ANDROID doesn't yield a usable response, for defense in depth.
 const INNERTUBE_API_KEY = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8'
-const INNERTUBE_CLIENT_VERSION = '2.20240726.00.00'
+
+const INNERTUBE_CLIENTS = [
+  {
+    clientName: 'ANDROID',
+    clientVersion: '19.29.37',
+    userAgent: 'com.google.android.youtube/19.29.37 (Linux; U; Android 13) gzip',
+    extraContext: { androidSdkVersion: 33 },
+  },
+  {
+    clientName: 'WEB',
+    clientVersion: '2.20250101.01.00',
+    userAgent:
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    extraContext: {},
+  },
+]
 
 export function extractVideoId(url) {
   try {
@@ -33,15 +56,14 @@ export function extractVideoId(url) {
   return null
 }
 
-export async function fetchPlayerResponse(videoId) {
+async function fetchPlayerResponseWithClient(videoId, client) {
   const res = await fetch(
     `https://www.youtube.com/youtubei/v1/player?key=${INNERTUBE_API_KEY}&prettyPrint=false`,
     {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+        'User-Agent': client.userAgent,
         Origin: 'https://www.youtube.com',
         Referer: `https://www.youtube.com/watch?v=${videoId}`,
       },
@@ -51,8 +73,9 @@ export async function fetchPlayerResponse(videoId) {
           client: {
             hl: 'en',
             gl: 'US',
-            clientName: 'WEB',
-            clientVersion: INNERTUBE_CLIENT_VERSION,
+            clientName: client.clientName,
+            clientVersion: client.clientVersion,
+            ...client.extraContext,
           },
         },
       }),
@@ -60,6 +83,30 @@ export async function fetchPlayerResponse(videoId) {
   )
   if (!res.ok) throw new Error(`Could not reach YouTube's player API (${res.status}).`)
   return res.json()
+}
+
+/**
+ * Tries each InnerTube client in turn, keeping the first response that's
+ * both playable and has a caption track list. Falls back to the last
+ * response tried (even without captions) if none qualify, so playability
+ * errors and "genuinely no captions" are still reported accurately rather
+ * than masked by the retry loop.
+ */
+export async function fetchPlayerResponse(videoId) {
+  let lastResponse = null
+  for (const client of INNERTUBE_CLIENTS) {
+    let response
+    try {
+      response = await fetchPlayerResponseWithClient(videoId, client)
+    } catch {
+      continue
+    }
+    lastResponse = response
+    const status = response?.playabilityStatus?.status
+    const hasCaptions = Array.isArray(response?.captions?.playerCaptionsTracklistRenderer?.captionTracks)
+    if (status === 'OK' && hasCaptions) return response
+  }
+  return lastResponse
 }
 
 export function pickSpanishCaptionTrack(playerResponse) {

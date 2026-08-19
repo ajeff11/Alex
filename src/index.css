@@ -378,6 +378,10 @@ a {
   padding: 4px 8px;
   margin-left: -8px;
   margin-right: -8px;
+  /* Keeps auto-scroll from landing a line underneath the sticky media
+     player — see the ResizeObserver in TranscriptViewer that sets
+     --sticky-offset to the player's real rendered height. */
+  scroll-margin-top: calc(var(--sticky-offset, 0px) + 16px);
   transition: background-color 0.2s ease;
 }
 

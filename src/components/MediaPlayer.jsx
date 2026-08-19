@@ -49,6 +49,13 @@ const MediaPlayer = forwardRef(function MediaPlayer(
         audioRef.current.play().catch(() => {})
       }
     },
+    pause() {
+      if (sourceType === 'youtube') {
+        ytPlayerRef.current?.pauseVideo?.()
+      } else {
+        audioRef.current?.pause()
+      }
+    },
   }))
 
   useEffect(() => {
@@ -70,7 +77,7 @@ const MediaPlayer = forwardRef(function MediaPlayer(
             if (playing) {
               pollRef.current = setInterval(() => {
                 onTimeUpdate?.(ytPlayerRef.current?.getCurrentTime() ?? 0)
-              }, 400)
+              }, 250)
             }
           },
         },
