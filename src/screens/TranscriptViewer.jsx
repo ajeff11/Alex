@@ -21,6 +21,10 @@ export default function TranscriptViewer() {
   const [activeIndex, setActiveIndex] = useState(-1)
   const [isPlaying, setIsPlaying] = useState(false)
   const [stickyOffset, setStickyOffset] = useState(0)
+  // Escape hatch for when the active-segment tracking is wrong (e.g. an
+  // uncaptioned video whose Gemini-estimated timestamps have drifted) — lets
+  // the user read the transcript at their own pace without it fighting them.
+  const [autoFollow, setAutoFollow] = useState(true)
   const playerRef = useRef(null)
   const mediaWrapperRef = useRef(null)
   const segmentRefs = useRef([])
@@ -51,12 +55,12 @@ export default function TranscriptViewer() {
   )
 
   useEffect(() => {
-    if (!isPlaying || activeIndex < 0) return
+    if (!autoFollow || !isPlaying || activeIndex < 0) return
     // block:'start' + scroll-margin-top (set from the measured sticky media
     // player height, below) so the active line lands cleanly below the
     // player instead of centering into the space it visually occupies.
     segmentRefs.current[activeIndex]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }, [activeIndex, isPlaying])
+  }, [activeIndex, isPlaying, autoFollow])
 
   // The video and audio players render at very different heights, and the
   // sticky player sits on top of the transcript's scroll area without
@@ -138,6 +142,8 @@ export default function TranscriptViewer() {
           sourceUrl={session.sourceUrl}
           onTimeUpdate={handleTimeUpdate}
           onPlayingChange={setIsPlaying}
+          autoFollow={autoFollow}
+          onToggleAutoFollow={() => setAutoFollow((f) => !f)}
         />
       )}
 

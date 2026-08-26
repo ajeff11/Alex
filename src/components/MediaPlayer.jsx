@@ -31,7 +31,7 @@ function loadYoutubeIframeApi() {
  * approach for transcript-sync UIs.
  */
 const MediaPlayer = forwardRef(function MediaPlayer(
-  { sourceType, sourceUrl, onTimeUpdate, onPlayingChange, measureRef },
+  { sourceType, sourceUrl, onTimeUpdate, onPlayingChange, measureRef, autoFollow, onToggleAutoFollow },
   ref
 ) {
   const containerRef = useRef(null)
@@ -93,6 +93,12 @@ const MediaPlayer = forwardRef(function MediaPlayer(
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-init only when the source actually changes
   }, [sourceType, sourceUrl])
 
+  const followToggle = onToggleAutoFollow && (
+    <button className="follow-toggle" onClick={onToggleAutoFollow} type="button">
+      {autoFollow ? '🔒 Auto-scroll on' : '🔓 Free scroll'}
+    </button>
+  )
+
   if (sourceType === 'youtube') {
     const videoId = extractVideoId(sourceUrl)
     if (!videoId) return null
@@ -101,6 +107,7 @@ const MediaPlayer = forwardRef(function MediaPlayer(
         <div className="video-frame">
           <div ref={containerRef} />
         </div>
+        {followToggle}
       </div>
     )
   }
@@ -116,6 +123,7 @@ const MediaPlayer = forwardRef(function MediaPlayer(
         onPlay={() => onPlayingChange?.(true)}
         onPause={() => onPlayingChange?.(false)}
       />
+      {followToggle}
     </div>
   )
 })

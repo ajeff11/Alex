@@ -205,7 +205,13 @@ export async function testApiKey(apiKey) {
 
 const TRANSCRIBE_PROMPT = `Transcribe the Spanish spoken in this audio/video. Return ONLY JSON matching this shape:
 {"segments": [{"text": "<spanish sentence or phrase>", "startTime": <seconds as number, or null if unknown>}]}
-Break the transcript into natural sentence- or phrase-level segments. Preserve accents and punctuation. Do not translate — keep the Spanish text as spoken.`
+Break the transcript into natural sentence- or phrase-level segments. Preserve accents and punctuation. Do not translate — keep the Spanish text as spoken.
+
+Timestamp accuracy matters a lot here — these drive a UI that highlights and auto-scrolls to the currently-playing line, so a wrong timestamp is worse than no timestamp. For each segment:
+- Set startTime to the actual moment IN THE VIDEO/AUDIO where that segment's speech begins, verified against the real elapsed time — not an estimate based on segment order, word count, or typical speech pacing.
+- Re-check timestamps periodically against the video's actual total duration as you go, so small per-segment errors don't compound into large drift later in a long recording.
+- Timestamps must be monotonically non-decreasing.
+- If you are not confident of the exact time for a segment, use null rather than guessing — a missing timestamp just skips highlighting for that line, which is far less disruptive than a wrong one.`
 
 const TRANSCRIBE_SCHEMA = {
   type: 'OBJECT',
