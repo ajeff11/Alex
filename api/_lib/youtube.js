@@ -91,22 +91,38 @@ async function fetchPlayerResponseWithClient(videoId, client) {
  * response tried (even without captions) if none qualify, so playability
  * errors and "genuinely no captions" are still reported accurately rather
  * than masked by the retry loop.
+ *
+ * Does one retry pass through the whole client list if the first pass
+ * found nothing usable. This is a modest, free mitigation for YouTube's
+ * bot-check (verified live: it can reject the InnerTube call itself, not
+ * just the HTML page, for both ANDROID and WEB) — not a real fix. A
+ * single Vercel invocation usually keeps the same outbound IP for its
+ * whole lifetime, so a same-request retry mostly helps only if the block
+ * is a transient rate/backend hiccup rather than a hard per-IP ban. The
+ * actual fix for a hard IP ban is routing through a residential proxy,
+ * which needs a separate service and isn't done here.
  */
 export async function fetchPlayerResponse(videoId) {
-  let lastResponse = null
-  for (const client of INNERTUBE_CLIENTS) {
-    let response
-    try {
-      response = await fetchPlayerResponseWithClient(videoId, client)
-    } catch {
-      continue
+  for (let pass = 0; pass < 2; pass++) {
+    if (pass > 0) await new Promise((resolve) => setTimeout(resolve, 400))
+
+    let lastResponse = null
+    for (const client of INNERTUBE_CLIENTS) {
+      let response
+      try {
+        response = await fetchPlayerResponseWithClient(videoId, client)
+      } catch {
+        continue
+      }
+      lastResponse = response
+      const status = response?.playabilityStatus?.status
+      const hasCaptions = Array.isArray(response?.captions?.playerCaptionsTracklistRenderer?.captionTracks)
+      if (status === 'OK' && hasCaptions) return response
     }
-    lastResponse = response
-    const status = response?.playabilityStatus?.status
-    const hasCaptions = Array.isArray(response?.captions?.playerCaptionsTracklistRenderer?.captionTracks)
-    if (status === 'OK' && hasCaptions) return response
+
+    if (pass === 1) return lastResponse
   }
-  return lastResponse
+  return null
 }
 
 export function pickSpanishCaptionTrack(playerResponse) {
