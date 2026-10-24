@@ -1,7 +1,7 @@
 import { db, newId, nowISO } from './db'
 
 /**
- * @param {{sourceTitle: string, sourceUrl: string, sourceType: 'youtube'|'podcast',
+ * @param {{sourceTitle: string, sourceUrl: string, sourceType: 'youtube'|'podcast'|'import',
  *   transcript: {text: string, startTime: number|null}[]}} fields
  */
 export async function saveSession(fields) {
