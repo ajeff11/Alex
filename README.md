@@ -8,6 +8,8 @@ spaced-repetition quiz.
 Single-user, no login, no backend database — all data lives in your browser
 (IndexedDB), with manual JSON export/import as backup.
 
+**Live app:** https://alex-five-kappa.vercel.app/
+
 ## Stack
 
 - React + Vite, built as an installable PWA (`vite-plugin-pwa`)
