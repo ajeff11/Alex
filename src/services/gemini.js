@@ -236,11 +236,12 @@ const TRANSCRIBE_SCHEMA = {
 // than the default before we call it "stuck" and surface an error.
 const TRANSCRIBE_TIMEOUT_MS = 5 * 60_000
 
-async function transcribeFileData(filePart) {
+async function transcribeFileData(filePart, promptSuffix = '') {
+  const prompt = promptSuffix ? `${TRANSCRIBE_PROMPT}\n\n${promptSuffix}` : TRANSCRIBE_PROMPT
   const response = await callGenerateContent(
     AUDIO_MODEL,
     {
-      contents: [{ role: 'user', parts: [{ text: TRANSCRIBE_PROMPT }, filePart] }],
+      contents: [{ role: 'user', parts: [{ text: prompt }, filePart] }],
       generationConfig: { responseMimeType: 'application/json', responseSchema: TRANSCRIBE_SCHEMA },
     },
     { timeoutMs: TRANSCRIBE_TIMEOUT_MS }
@@ -272,10 +273,18 @@ export async function transcribeFromUploadedFile(fileUri, mimeType) {
  * tokens proportional to video length (Gemini ingests it as full video, not
  * audio-only).
  * @param {string} youtubeUrl canonical https://www.youtube.com/watch?v=... or youtu.be URL
+ * @param {number|null} [durationSeconds] the video's real length, when known
+ *   (from the metadata lookup in transcription.js) — grounds Gemini's
+ *   timestamp estimates against an actual fact instead of leaving it to
+ *   infer the total length purely from the video content itself.
  * @returns {Promise<{text: string, startTime: number|null}[]>}
  */
-export async function transcribeYoutubeUrl(youtubeUrl) {
-  return transcribeFileData({ file_data: { file_uri: youtubeUrl } })
+export async function transcribeYoutubeUrl(youtubeUrl, durationSeconds) {
+  const suffix =
+    typeof durationSeconds === 'number' && durationSeconds > 0
+      ? `This video is exactly ${durationSeconds} seconds long in total — use that as ground truth: no startTime may exceed it, and check your pacing against it throughout instead of estimating purely from segment order or speech rate.`
+      : ''
+  return transcribeFileData({ file_data: { file_uri: youtubeUrl } }, suffix)
 }
 
 /**

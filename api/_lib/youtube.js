@@ -86,43 +86,36 @@ async function fetchPlayerResponseWithClient(videoId, client) {
 }
 
 /**
- * Tries each InnerTube client in turn, keeping the first response that's
- * both playable and has a caption track list. Falls back to the last
- * response tried (even without captions) if none qualify, so playability
- * errors and "genuinely no captions" are still reported accurately rather
- * than masked by the retry loop.
+ * Queries every InnerTube client at once (not in sequence — this is a
+ * metadata/opportunistic-captions check, not the primary transcription
+ * path anymore, so it should cost as little latency as possible) and keeps
+ * the first response that's both playable and has a caption track list.
+ * Falls back to any response that came back at all (even without captions)
+ * so playability errors and video length/title are still available to the
+ * caller even when no caption track qualifies.
  *
- * Does one retry pass through the whole client list if the first pass
- * found nothing usable. This is a modest, free mitigation for YouTube's
- * bot-check (verified live: it can reject the InnerTube call itself, not
- * just the HTML page, for both ANDROID and WEB) — not a real fix. A
- * single Vercel invocation usually keeps the same outbound IP for its
- * whole lifetime, so a same-request retry mostly helps only if the block
- * is a transient rate/backend hiccup rather than a hard per-IP ban. The
- * actual fix for a hard IP ban is routing through a residential proxy,
- * which needs a separate service and isn't done here.
+ * A same-request retry pass was tried here previously and verified live
+ * (two identical blocked results on a re-test) to make no difference: a
+ * single Vercel invocation keeps the same outbound IP for its whole
+ * lifetime, so retrying from that same IP doesn't help with YouTube's
+ * bot-check. Removed rather than kept as dead latency. The actual fix for
+ * a hard IP ban is a residential proxy, which needs a separate service and
+ * isn't done here.
  */
 export async function fetchPlayerResponse(videoId) {
-  for (let pass = 0; pass < 2; pass++) {
-    if (pass > 0) await new Promise((resolve) => setTimeout(resolve, 400))
+  const results = await Promise.allSettled(
+    INNERTUBE_CLIENTS.map((client) => fetchPlayerResponseWithClient(videoId, client))
+  )
 
-    let lastResponse = null
-    for (const client of INNERTUBE_CLIENTS) {
-      let response
-      try {
-        response = await fetchPlayerResponseWithClient(videoId, client)
-      } catch {
-        continue
-      }
-      lastResponse = response
-      const status = response?.playabilityStatus?.status
-      const hasCaptions = Array.isArray(response?.captions?.playerCaptionsTracklistRenderer?.captionTracks)
-      if (status === 'OK' && hasCaptions) return response
-    }
-
-    if (pass === 1) return lastResponse
+  let lastResponse = null
+  for (const result of results) {
+    if (result.status !== 'fulfilled') continue
+    lastResponse = result.value
+    const status = result.value?.playabilityStatus?.status
+    const hasCaptions = Array.isArray(result.value?.captions?.playerCaptionsTracklistRenderer?.captionTracks)
+    if (status === 'OK' && hasCaptions) return result.value
   }
-  return null
+  return lastResponse
 }
 
 export function pickSpanishCaptionTrack(playerResponse) {
